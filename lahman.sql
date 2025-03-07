@@ -1,7 +1,6 @@
 
 --1. Find all players in the database who played at Vanderbilt University. Create a list showing each player's first and last names as well as the total salary they earned in the major leagues. Sort this list in descending order by the total salary earned. Which Vanderbilt player earned the most money in the majors?
 
-
 SELECT 
     vp.namefirst AS "First Name", 
     vp.namelast AS "Last Name",
@@ -152,7 +151,7 @@ al_winners AS (
     WHERE am.awardid = 'TSN Manager of the Year' AND am.lgid = 'AL'
 )
 SELECT 
-    p.namefirst || ' ' || p.namelast AS "Manager Name",
+    CONCAT(p.namefirst, ' ', p.namelast) AS "Manager Name",
     nl.yearid AS "NL Award Year",
     nl.team_name AS "NL Team",
     al.yearid AS "AL Award Year",
@@ -162,18 +161,125 @@ JOIN al_winners al ON nl.playerid = al.playerid
 JOIN people p ON nl.playerid = p.playerid
 ORDER BY p.namelast, p.namefirst; 
 
-
 --7. Which pitcher was the least efficient in 2016 in terms of salary / strikeouts? Only consider pitchers who started at least 10 games (across all teams). Note that pitchers often play for more than one team in a season, so be sure that you are counting all stats for each player.
 
+WITH pitcher_starting AS (
+    SELECT 
+        p.playerid,
+        SUM(p.gs) AS total_games_started
+    FROM pitching p
+    WHERE p.yearid = 2016
+    GROUP BY p.playerid
+    HAVING SUM(p.gs) >= 10
+),
+pitcher_so AS (
+    SELECT 
+        ps.playerid,
+        SUM(p.so) AS total_so
+    FROM pitcher_starting ps
+    JOIN pitching p ON ps.playerid = p.playerid
+    WHERE p.yearid = 2016
+    GROUP BY ps.playerid
+),
+pitcher_salaries AS (
+    SELECT 
+        ps.playerid,
+        SUM(s.salary) AS total_salary
+    FROM pitcher_starting ps
+    JOIN salaries s ON ps.playerid = s.playerid
+    WHERE s.yearid = 2016
+    GROUP BY ps.playerid
+)
+SELECT 
+    CONCAT(ppl.namefirst, ' ', ppl.namelast) AS pitcher_name,
+    ps.total_salary AS salary,
+    pk.total_so AS strikeouts,
+    ROUND(ps.total_salary::numeric /(pk.total_so),2) AS salary_lost_per_strikeout
+FROM pitcher_starting p
+JOIN pitcher_so pk ON p.playerid = pk.playerid
+JOIN pitcher_salaries ps ON p.playerid = ps.playerid
+JOIN people ppl ON p.playerid = ppl.playerid
+WHERE pk.total_so > 0
+ORDER BY salary_lost_per_strikeout DESC;
 
 --8. Find all players who have had at least 3000 career hits. Report those players' names, total number of hits, and the year they were inducted into the hall of fame (If they were not inducted into the hall of fame, put a null in that column.) Note that a player being inducted into the hall of fame is indicated by a 'Y' in the **inducted** column of the halloffame table.
+
+WITH career_hits AS (
+    SELECT 
+        b.playerid,
+        SUM(b.h) AS total_hits
+    FROM batting b
+    GROUP BY b.playerid
+    HAVING SUM(b.h) >= 3000
+),
+hof_induction AS (
+    SELECT 
+        h.playerid,
+        MIN(h.yearid) AS induction_year
+    FROM halloffame h
+    WHERE h.inducted = 'Y'
+    GROUP BY h.playerid
+)
+SELECT 
+    CONCAT(p.namefirst, ' ', p.namelast) AS "Player Name",
+    ch.total_hits,
+    hof.induction_year
+FROM career_hits ch
+JOIN people p ON ch.playerid = p.playerid
+LEFT JOIN hof_induction hof ON ch.playerid = hof.playerid
+ORDER BY ch.total_hits DESC;
 
 
 --9. Find all players who had at least 1,000 hits for two different teams. Report those players' full names.
 
+SELECT DISTINCT 
+    CONCAT(p.namefirst, ' ', p.namelast) AS player_name
+FROM people p
+JOIN (
+    SELECT playerid
+    FROM (
+        SELECT 
+            b.playerid,
+            b.teamid,
+            SUM(b.h) AS team_hits
+        FROM batting b
+        GROUP BY b.playerid, b.teamid
+        HAVING SUM(b.h) >= 1000
+    ) AS hits_by_team
+    GROUP BY playerid
+    HAVING COUNT(*) >= 2
+) AS multiple_teams ON p.playerid = multiple_teams.playerid
+ORDER BY player_name;
 
 --10. Find all players who hit their career highest number of home runs in 2016. Consider only players who have played in the league for at least 10 years, and who hit at least one home run in 2016. Report the players' first and last names and the number of home runs they hit in 2016.
 
+SELECT 
+    CONCAT(p.namefirst, ' ', p.namelast) AS player_name,
+    b2016.hr AS home_runs_2016
+FROM batting b2016
+JOIN (
+    SELECT playerid
+    FROM (
+        SELECT playerid, 
+            COUNT(DISTINCT yearid) AS years_played
+        FROM batting
+        GROUP BY playerid
+        HAVING COUNT(DISTINCT yearid) >= 10
+    ) AS over_ten_year_players
+) AS ten ON b2016.playerid = ten.playerid
+JOIN people p ON b2016.playerid = p.playerid
+WHERE 
+    b2016.yearid = 2016
+    AND b2016.hr > 0
+    AND NOT EXISTS (
+        SELECT 1
+        FROM batting b_other
+        WHERE 
+            b_other.playerid = b2016.playerid
+            AND b_other.yearid != 2016
+            AND b_other.hr > b2016.hr
+    )
+ORDER BY b2016.hr DESC;
 
 
 
